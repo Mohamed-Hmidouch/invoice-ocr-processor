@@ -16,7 +16,7 @@ class FileValidator:
     3. SANITIZATION : Protège contre le Path Traversal (LFI) via le renommage sécurisé.
     """
     
-    MAX_FILE_SIZE_MB = 10
+    MAX_FILE_SIZE_MB = 15
     MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
     
     # Types MIME acceptés par notre OCR
