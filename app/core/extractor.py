@@ -1,246 +1,188 @@
 """
-Extracteur de données structurées à partir du texte brut OCR.
+Extracteur Agentique (LLM-based) de données structurées.
 
 Responsabilités :
-    - Nettoyer le texte brut issu de PaddleOCR.
-    - Extraire les champs clés d'une facture via des expressions régulières.
-    - Construire et retourner un objet Invoice peuplé.
-    - Déléguer la gestion d'erreurs aux aspects AOP (zéro try/except ici).
-
-Design :
-    - Les regex sont compilées au chargement du module (performance).
-    - Stockées dans un dict → ajouter un champ = ajouter une entrée (Open/Closed).
-    - Chaque méthode d'extraction est statique et pure (Single Responsibility).
+    - Recevoir le texte brut de l'OCR.
+    - Contacter un LLM (e.g., Gemini) avec un "Master Prompt" stict pour 
+      l'extraction contextuelle et la validation mathématique.
+    - Convertir le JSON renvoyé par le LLM en un objet de domaine `Invoice`.
 """
-import re
-from decimal import Decimal, InvalidOperation
+import os
+import json
 from datetime import date
-from typing import List, Tuple, Optional
+from decimal import Decimal, InvalidOperation
+from typing import List, Tuple
+
+import google.generativeai as genai
 
 from app.core.aspect import handle_exceptions
 from app.core.exceptions import ExtractionError
 from app.models.invoice import Invoice, InvoiceItem
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# REGEX COMPILÉES — Chargées UNE SEULE FOIS au import du module
+# SYSTEM PROMPT INVOICE AGENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_PATTERNS = {
-    "invoice_number": re.compile(
-        r"(?:facture|invoice|fact|n[°o])\s*[:#]?\s*([A-Z0-9][\w\-/]{2,})",
-        re.IGNORECASE,
-    ),
-    "date": re.compile(
-        r"(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})"
-    ),
-    "total_ttc": re.compile(
-        r"(?:total\s*(?:ttc|t\.t\.c|général|general|à\s*payer|net))"
-        r"\s*[:#]?\s*([\d\s]+[.,]\d{2})",
-        re.IGNORECASE,
-    ),
-    "total_ht": re.compile(
-        r"(?:total\s*(?:ht|h\.t|hors\s*taxe))"
-        r"\s*[:#]?\s*([\d\s]+[.,]\d{2})",
-        re.IGNORECASE,
-    ),
-    "tva": re.compile(
-        r"(?:tva|t\.v\.a|taxe)"
-        r"\s*[:#]?\s*([\d\s]+[.,]\d{2})",
-        re.IGNORECASE,
-    ),
-    "tax_id": re.compile(
-        r"(?:ice|siret|siren|tva\s*intra|n[°o]\s*(?:identification|id))"
-        r"\s*[:#]?\s*([\dA-Z]{8,})",
-        re.IGNORECASE,
-    ),
+_SYSTEM_PROMPT = """
+**System Role:**
+You are an elite Global Document Intelligence Agent. Your mission is to extract highly accurate, structured data from raw, noisy OCR text of any invoice type (Standard, Commercial, Freight, International, Proforma).
+
+**Core Directives & Logic:**
+1. **Adaptive Extraction:** Scan the document for standard billing details AND international trade details (Consignee, Buyer, Port, Transport, Incoterms).
+2. **OMIT MISSING DATA (STRICT RULE):** If a specific piece of information is NOT explicitly found or confidently deduced from the text, DO NOT include its key in the JSON output. Never output `null` values; simply omit the key entirely.
+3. **Math & Logic Validation:** Cross-check `Subtotal + Tax = Grand Total`. If numbers are misread by OCR (e.g., '0' instead of 'O'), use math to deduce the correct value.
+4. **Data Formatting:**
+   - Dates: Strict `YYYY-MM-DD` format.
+   - Amounts: Strict float format (e.g., `1500.50`). Strip all spaces, letters, and currency symbols.
+   - Currency: Deduce the 3-letter ISO code (e.g., MAD, XOF, EUR, USD).
+
+**Target JSON Schema (Use keys ONLY if data is present):**
+{
+  "invoice_number": "string",
+  "date": "YYYY-MM-DD",
+  "supplier_name": "string (Exporter / Seller / Biller)",
+  "supplier_tax_id": "string (ICE, VAT, SIRET, RC)",
+  "destinataire": "string (Consignee / Entity receiving goods)",
+  "importateur": "string (Buyer / Acheteur)",
+  "port": "string (Port of loading/discharge)",
+  "moyen_transport": "string (Transport method / Vessel / Carrier)",
+  "incoterm": "string (e.g., FOB, CIF, EXW)",
+  "amounts": {
+    "total_excl_tax": "float (HT / Subtotal)",
+    "tax_amount": "float (TVA / Tax)",
+    "total_incl_tax": "float (TTC / Grand Total)"
+  },
+  "currency": "string",
+  "items": [
+    {
+      "description": "string",
+      "quantity": "float",
+      "unit_price": "float",
+      "total_price": "float"
+    }
+  ],
+  "confidence_score": "float (0.0 to 1.0)"
 }
 
-_ITEM_LINE_PATTERN = re.compile(
-    r"^(.{5,50}?)\s+"             # Description (5-50 chars)
-    r"(\d+(?:[.,]\d+)?)\s+"       # Quantité
-    r"([\d\s]+[.,]\d{2})\s+"      # Prix unitaire
-    r"([\d\s]+[.,]\d{2})$",       # Prix total ligne
-    re.MULTILINE,
-)
-
+**Output format:** Return pure JSON only. Do not use markdown formatting blocks (no ```json). do it for any fuckin,g type of facture
+"""
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CLASSE EXTRACTEUR
+# CLASSE EXTRACTOR (AGENTIC)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class Extractor:
     """
-    Extrait les données structurées d'une facture à partir des résultats OCR.
-
-    Utilisation :
-        extractor = Extractor()
-        invoice = extractor.extract(ocr_results)
-        print(invoice.invoice_number, invoice.total_amount_incl_tax)
+    Agentic Extractor propulsé par LLM (Gemini).
     """
+
+    def __init__(self):
+        """Initialise le modèle LLM à partir de la clé API présente dans l'environnement."""
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ExtractionError("La clé GEMINI_API_KEY n'est pas définie dans l'environnement.")
+        
+        genai.configure(api_key=api_key)
+        
+        # Configuration stricte pour outputer systématiquement du JSON
+        generative_config = genai.types.GenerationConfig(
+            temperature=0.0,
+            response_mime_type="application/json"
+        )
+        
+        self.model = genai.GenerativeModel(
+            model_name='gemini-2.5-flash',
+            system_instruction=_SYSTEM_PROMPT,
+            generation_config=generative_config
+        )
 
     # ── API publique ────────────────────────────────────────────────────────
 
     @handle_exceptions(Exception, raise_as=ExtractionError)
     def extract(self, ocr_results: List[Tuple[str, float]]) -> Invoice:
         """
-        Pipeline complet : résultats OCR bruts → objet Invoice structuré.
-
-        Paramètres
-        ----------
-        ocr_results : List[Tuple[str, float]]
-            Sortie de OCREngine.read() → [(texte_détecté, score_confiance), ...].
-
-        Retour
-        ------
-        Invoice
-            Objet facture avec tous les champs peuplés (ou None si non détectés).
-
-        Lève
-        ----
-        ExtractionError
-            En cas d'erreur durant le parsing (via AOP, jamais de try/except ici).
+        Passe le texte OCR à l'Agent et mappe le JSON retourné vers l'objet Invoice.
         """
         raw_text = self._build_raw_text(ocr_results)
-        avg_confidence = self._compute_confidence(ocr_results)
-
-        return Invoice(
-            invoice_number=self._extract_invoice_number(raw_text),
-            date=self._extract_date(raw_text),
-            supplier_name=self._guess_supplier_name(ocr_results),
-            supplier_tax_id=self._extract_tax_id(raw_text),
-            total_amount_excl_tax=self._extract_amount(raw_text, "total_ht"),
-            tax_amount=self._extract_amount(raw_text, "tva"),
-            total_amount_incl_tax=self._extract_amount(raw_text, "total_ttc"),
-            items=self._extract_items(raw_text),
-            confidence_score=avg_confidence,
+        
+        prompt_context = (
+            f"Analyze this raw OCR text stream and extract the required fields as specified:\n\n{raw_text}"
         )
+        
+        # Appel LLM (Synchrone)
+        response = self.model.generate_content(prompt_context)
+        llm_json = self._parse_json(response.text)
+        
+        return self._map_to_invoice(llm_json)
 
-    # ── Construction du texte ───────────────────────────────────────────────
+    # ── Méthodes privées ────────────────────────────────────────────────────
 
     @staticmethod
     def _build_raw_text(ocr_results: List[Tuple[str, float]]) -> str:
-        """Concatène tous les blocs OCR en un seul texte navigable par les regex."""
+        """Concatène tous les blocs OCR en un seul texte."""
         return "\n".join(text for text, _ in ocr_results)
 
     @staticmethod
-    def _compute_confidence(ocr_results: List[Tuple[str, float]]) -> float:
-        """Calcule le score de confiance moyen de l'ensemble des résultats OCR."""
-        if not ocr_results:
-            return 0.0
-        scores = [score for _, score in ocr_results]
-        return round(sum(scores) / len(scores), 4)
-
-    # ── Extraction des champs individuels ───────────────────────────────────
-
-    @staticmethod
-    def _extract_invoice_number(text: str) -> Optional[str]:
-        """Extrait le numéro de facture (ex: F-2024-001, INV/2024/042)."""
-        match = _PATTERNS["invoice_number"].search(text)
-        return match.group(1).strip() if match else None
+    def _parse_json(text: str) -> dict:
+        """Nettoie le texte (au cas où il resterait des balises markdown) et charge le JSON."""
+        cleaned = text.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        return json.loads(cleaned.strip())
 
     @staticmethod
-    def _extract_date(text: str) -> Optional[date]:
-        """
-        Extrait la date au format JJ/MM/AAAA (ou variantes avec - ou .).
-
-        Gère les années sur 2 chiffres (ex: 24 → 2024).
-        """
-        match = _PATTERNS["date"].search(text)
-        if not match:
+    def _parse_decimal(value) -> Decimal:
+        """Gère les valeurs qui viennent du JSON."""
+        if value is None:
             return None
-
-        day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
-
-        # Normalisation : année sur 2 chiffres → 4 chiffres
-        if year < 100:
-            year += 2000
-
-        # Validation via le constructeur date (plutôt qu'un if/else fragile)
         try:
-            return date(year, month, day)
-        except ValueError:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
             return None
 
-    @staticmethod
-    def _extract_tax_id(text: str) -> Optional[str]:
-        """Extrait l'identifiant fiscal (ICE, SIRET, SIREN, TVA intra, etc.)."""
-        match = _PATTERNS["tax_id"].search(text)
-        return match.group(1).strip() if match else None
-
-    # ── Extraction des montants ─────────────────────────────────────────────
-
-    @staticmethod
-    def _parse_decimal(raw_value: str) -> Optional[Decimal]:
-        """
-        Convertit une chaîne brute en Decimal de manière sûre.
-
-        Gère les formats français : "1 200,50" → Decimal("1200.50").
-        """
-        cleaned = raw_value.replace(" ", "").replace(",", ".")
-        try:
-            return Decimal(cleaned)
-        except InvalidOperation:
-            return None
-
-    def _extract_amount(self, text: str, pattern_key: str) -> Optional[Decimal]:
-        """
-        Extrait un montant monétaire selon la clé de pattern fournie.
-
-        Paramètres
-        ----------
-        text : str
-            Texte brut OCR.
-        pattern_key : str
-            Clé dans _PATTERNS ("total_ht", "tva", "total_ttc").
-        """
-        match = _PATTERNS[pattern_key].search(text)
-        if not match:
-            return None
-        return self._parse_decimal(match.group(1))
-
-    # ── Extraction des lignes d'articles ────────────────────────────────────
-
-    def _extract_items(self, text: str) -> List[InvoiceItem]:
-        """
-        Extrait les lignes d'articles (description, qté, PU, total).
-
-        Le pattern attend un format tabulaire classique :
-            "Câble HDMI 2m    3    15,00    45,00"
-        """
+    def _map_to_invoice(self, data: dict) -> Invoice:
+        """Convertit le dictionnaire JSON LLM vers l'objet Invoice natif du projet."""
+        
+        # Parse la Date
+        parsed_date = None
+        raw_date = data.get("date")
+        if raw_date:
+            try:
+                parsed_date = date.fromisoformat(raw_date)
+            except ValueError:
+                pass
+                
+        # Construit les items
         items = []
-
-        for match in _ITEM_LINE_PATTERN.finditer(text):
-            description, raw_qty, raw_unit_price, raw_total = match.groups()
-
-            quantity = float(raw_qty.replace(",", "."))
-            unit_price = self._parse_decimal(raw_unit_price)
-            total_price = self._parse_decimal(raw_total)
-
-            # On ne crée l'item que si les montants sont valides
-            if unit_price is not None and total_price is not None:
-                items.append(InvoiceItem(
-                    description=description.strip(),
-                    quantity=quantity,
-                    unit_price=unit_price,
-                    total_price=total_price,
-                ))
-
-        return items
-
-    # ── Heuristiques ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _guess_supplier_name(ocr_results: List[Tuple[str, float]]) -> Optional[str]:
-        """
-        Heuristique : le nom du fournisseur est souvent dans les premières
-        lignes en haut de la facture.
-
-        On prend la première ligne non-numérique de plus de 3 caractères
-        parmi les 5 premiers résultats OCR.
-        """
-        for text, _ in ocr_results[:5]:
-            cleaned = text.strip()
-            if len(cleaned) > 3 and not cleaned.replace(" ", "").isdigit():
-                return cleaned
-        return None
+        for it in data.get("items", []):
+            items.append(InvoiceItem(
+                description=it.get("description", ""),
+                quantity=float(it.get("quantity", 0.0) or 0.0),
+                unit_price=self._parse_decimal(it.get("unit_price")) or Decimal('0.0'),
+                total_price=self._parse_decimal(it.get("total_price")) or Decimal('0.0')
+            ))
+            
+        # Extrait les montants du sous-objet
+        amounts = data.get("amounts", {})
+        
+        return Invoice(
+            invoice_number=data.get("invoice_number"),
+            date=parsed_date,
+            supplier_name=data.get("supplier_name"),
+            supplier_tax_id=data.get("supplier_tax_id"),
+            destinataire=data.get("destinataire"),
+            importateur=data.get("importateur"),
+            port=data.get("port"),
+            moyen_transport=data.get("moyen_transport"),
+            incoterm=data.get("incoterm"),
+            total_amount_excl_tax=self._parse_decimal(amounts.get("total_excl_tax")),
+            tax_amount=self._parse_decimal(amounts.get("tax_amount")),
+            total_amount_incl_tax=self._parse_decimal(amounts.get("total_incl_tax")),
+            currency=data.get("currency"),
+            items=items,
+            confidence_score=float(data.get("confidence_score") or 0.0),
+        )

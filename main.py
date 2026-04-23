@@ -6,6 +6,10 @@ La gestion globale des erreurs est centralisée ici — un seul try/except
 au sommet de la pile d'appels, conformément au principe AOP.
 """
 import sys
+from dotenv import load_dotenv
+
+# Charge les variables d'environnement depuis .env (ex: GEMINI_API_KEY)
+load_dotenv()
 
 from app import OCREngine, Extractor, FileManager, InvoiceProcessorError
 

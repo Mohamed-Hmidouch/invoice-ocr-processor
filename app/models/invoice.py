@@ -30,6 +30,11 @@ class Invoice:
     # Fournisseur
     supplier_name: Optional[str] = None
     supplier_tax_id: Optional[str] = None  # SIRET, ICE, N° TVA, etc.
+    destinataire: Optional[str] = None     # Consignee / Entité recevant les biens
+    importateur: Optional[str] = None      # Acheteur / Importateur
+    port: Optional[str] = None             # Port de chargement / déchargement
+    moyen_transport: Optional[str] = None  # Navire / Transporteur
+    incoterm: Optional[str] = None         # FOB, CIF, EXW, etc.
     
     # Montants (L'utilisation de Decimal est recommandée pour les devises)
     total_amount_excl_tax: Optional[Decimal] = None  # HT
@@ -39,7 +44,8 @@ class Invoice:
     # Lignes de la facture avec une liste vide par défaut (bonne pratique dataclasses)
     items: List[InvoiceItem] = field(default_factory=list)
     
-    # Score de confiance global de l'extraction (pour juger s'il faut une revue humaine)
+    # Devises et Score
+    currency: Optional[str] = None
     confidence_score: float = 0.0
     
     def is_valid(self) -> bool:

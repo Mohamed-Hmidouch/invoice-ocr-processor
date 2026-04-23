@@ -24,10 +24,11 @@ from app.core.exceptions import (
 
 # ── Silence total sur les logs de PaddleOCR et ses dépendances ──────────────
 os.environ["FLAGS_minloglevel"] = "3"          # PaddlePaddle C++ logs
+os.environ["FLAGS_use_mkldnn"] = "0"           # Désactive oneDNN (compatibilité CPU)
 logging.getLogger("ppocr").setLevel(logging.CRITICAL)
 
-# Formats d'images supportés par PaddleOCR
-_SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
+# Formats de fichiers supportés par PaddleOCR (images + pdf)
+_SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".pdf"}
 
 
 class OCREngine:
@@ -131,14 +132,19 @@ class OCREngine:
 
     @handle_exceptions(Exception, raise_as=OCREngineError)
     def _run_ocr(self, path: Path) -> List[Tuple[str, float]]:
-        """Exécute PaddleOCR et retourne les résultats nettoyés."""
+        """Exécute PaddleOCR (images ou PDF multi-pages) et retourne les résultats nettoyés."""
         raw_results = self._ocr.ocr(str(path), cls=True)
 
-        if not raw_results or not raw_results[0]:
+        if not raw_results:
             return []
 
-        return [
-            (line_info[1][0], round(line_info[1][1], 4))
-            for line_info in raw_results[0]
-            if line_info[1]
-        ]
+        extracted = []
+        for page in raw_results:
+            if not page:
+                continue
+            for line_info in page:
+                if line_info and len(line_info) > 1 and line_info[1]:
+                    extracted.append((line_info[1][0], round(line_info[1][1], 4)))
+        
+        return extracted
+

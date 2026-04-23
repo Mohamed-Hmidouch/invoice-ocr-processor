@@ -1,0 +1,11 @@
+{
+  "invoice_number": "ure",
+  "date": "2020-06-10",
+  "supplier_name": "Facture n° 123",
+  "supplier_tax_id": "xxxDEVISn",
+  "total_amount_excl_tax": 2539.9,
+  "tax_amount": null,
+  "total_amount_incl_tax": null,
+  "items": [],
+  "confidence_score": 0.9637
+}
