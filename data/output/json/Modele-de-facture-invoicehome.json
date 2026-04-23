@@ -1,0 +1,11 @@
+{
+  "invoice_number": "LOGO",
+  "date": "2019-01-29",
+  "supplier_name": "FACTURE",
+  "supplier_tax_id": null,
+  "total_amount_excl_tax": 145.0,
+  "tax_amount": null,
+  "total_amount_incl_tax": null,
+  "items": [],
+  "confidence_score": 0.9698
+}
