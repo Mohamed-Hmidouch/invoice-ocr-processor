@@ -32,3 +32,6 @@ class ExtractionError(InvoiceProcessorError):
 
 class FileManagerError(InvoiceProcessorError):
     """Erreur liée à la gestion des fichiers (lecture, écriture, déplacement)."""
+
+class SecurityValidationError(InvoiceProcessorError):
+    """Exception levée pour des raisons de sécurité (trop gros, mauvais MIME, Path Traversal)."""

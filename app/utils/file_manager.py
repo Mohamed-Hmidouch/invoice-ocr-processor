@@ -15,6 +15,7 @@ Design :
 """
 import json
 import shutil
+import logging
 from dataclasses import asdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -25,6 +26,7 @@ from app.core.aspect import handle_exceptions
 from app.core.exceptions import FileManagerError
 from app.core.ocr_engine import _SUPPORTED_FORMATS
 from app.models.invoice import Invoice
+from app.utils.security import FileValidator
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -100,19 +102,17 @@ class FileManager:
     @handle_exceptions(Exception, raise_as=FileManagerError)
     def get_pending_files(self) -> List[Path]:
         """
-        Liste les fichiers images en attente dans le dossier d'entrée.
-
-        Retour
-        ------
-        List[Path]
-            Chemins triés des images à traiter.
-            Seuls les formats supportés par le moteur OCR sont retenus.
+        Liste les fichiers images en attente dans le dossier d'entrée après validation Security.
         """
-        return sorted(
-            path
-            for path in self._input_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in _SUPPORTED_FORMATS
-        )
+        valid_files = []
+        for path in self._input_dir.iterdir():
+            if path.is_file() and path.suffix.lower() in _SUPPORTED_FORMATS:
+                try:
+                    safe_path = FileValidator.validate_and_sanitize(path)
+                    valid_files.append(safe_path)
+                except Exception as e:
+                    logging.warning(f"SECURITY ALERT - Fichier bloqué ({path}): {e}")
+        return sorted(valid_files)
 
     @handle_exceptions(Exception, raise_as=FileManagerError)
     def move_to_processed(self, file_path: Path) -> Path:
