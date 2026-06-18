@@ -1,0 +1,83 @@
+{
+  "invoice_number": "A1432b85",
+  "date": "2023-10-04",
+  "supplier_name": "DIALLO HOLDINGS S.A",
+  "supplier_tax_id": null,
+  "destinataire": "TIMAR GROUPE",
+  "importateur": "YOLIVA IMPORT EXPORT",
+  "port": "PORT DE TANGER MED",
+  "moyen_transport": "SENEGAL CARGO",
+  "incoterm": "FOB",
+  "total_amount_excl_tax": 101000000.0,
+  "tax_amount": 40065000.0,
+  "total_amount_incl_tax": 141065000.0,
+  "items": [
+    {
+      "description": "Arachides de Qualité A",
+      "quantity": 60000.0,
+      "unit_price": 350.0,
+      "total_price": 21000000.0,
+      "tax_rate": null
+    },
+    {
+      "description": "Noix de Cajou Premium",
+      "quantity": 35000.0,
+      "unit_price": 1200.0,
+      "total_price": 21000000.0,
+      "tax_rate": null
+    },
+    {
+      "description": "Huile de Palme",
+      "quantity": 25000.0,
+      "unit_price": 800.0,
+      "total_price": 20500000.0,
+      "tax_rate": null
+    },
+    {
+      "description": "Riz Grade A",
+      "quantity": 30000.0,
+      "unit_price": 500.0,
+      "total_price": 15000000.0,
+      "tax_rate": null
+    },
+    {
+      "description": "Coton de Grade Supérieur",
+      "quantity": 40000.0,
+      "unit_price": 600.0,
+      "total_price": 24000000.0,
+      "tax_rate": null
+    }
+  ],
+  "currency": "XOF",
+  "confidence_score": 1.0,
+  "extra_data": {
+    "supplier_address": "Ouest Foire Villa Lot 36 Près de la station Elton en face de SENEGAL - JAPON - DAKAR",
+    "supplier_country": "Sénégal",
+    "buyer_address": null,
+    "buyer_country": null,
+    "seller_bank": "UBA",
+    "seller_bank_account": "SN153 01370 3505 00158620 32",
+    "consignee_address": "quartier Oukacha, 20580 immeuble.1, rue 1 Ville : Casablanca",
+    "consignee_country": "Maroc",
+    "consignee_phone": "+212 522676000",
+    "consignee_email": "timargroupe@gmail.com",
+    "consignee_rc": "40957 Casablanca",
+    "consignee_ice": "000083928000058",
+    "pre_transport": "NDIAYE TRANSPORT S.A",
+    "place_of_receipt": "Port Autonome de Dakar",
+    "payment_terms": "Le paiement intégral doit être effectué dans les 30 jours suivant la date de la facture.",
+    "payment_conditions": "Virement bancaire",
+    "required_documents": "L'acheteur est responsable de tous les documents d'importation requis, y compris les licences.",
+    "insurance_responsibility": "Les marchandises sont assurées jusqu'à leur lieu de destination. Toute perte ou dommage pendant le transit est de la responsabilité de l'acheteur une fois les marchandises remises au transporteur.",
+    "export_visa_responsibility": "Le vendeur est responsable d'obtenir tous les visas et autres autorisations nécessaires pour l'exportation des marchandises. Tous les coûts associés sont à la charge du vendeur.",
+    "contact_name": "Amadou kaba",
+    "contact_phone": "33 823 45 56",
+    "dispatch_requested_date": "2023-10-20",
+    "disposal_date": "2023-10-13",
+    "freight_cost": 8850000,
+    "packing_cost": null,
+    "other_costs": 20950000,
+    "insurance_cost": 1515000,
+    "total_deductions": 10000000
+  }
+}

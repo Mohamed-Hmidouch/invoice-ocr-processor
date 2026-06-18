@@ -1,0 +1,10 @@
+{
+  "invoice_number": "N°",
+  "date": "2020-11-15",
+  "supplier_name": "Vert Electrique",
+  "total_amount_excl_tax": 968.76,
+  "tax_amount": 169.12,
+  "total_amount_incl_tax": 1144.65,
+  "currency": "EUR",
+  "confidence_score": 0.0
+}

@@ -48,6 +48,12 @@ class Invoice:
     currency: Optional[str] = None
     confidence_score: float = 0.0
     
+    # Données dynamiques supplémentaires (hors modèle strict)
+    extra_data: dict = field(default_factory=dict)
+    
+    # Mapping des champs vers les identifiants de ligne OCR (pas d'envoi de coordonnés XY au LLM)
+    ocr_line_references: dict = field(default_factory=dict)
+    
     def is_valid(self) -> bool:
         """
         Vérifie la validité basique des données obligatoires selon les règles métiers.

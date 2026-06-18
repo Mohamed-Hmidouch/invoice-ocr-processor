@@ -1,0 +1,60 @@
+{
+  "invoice_number": "A1432b85",
+  "date": "2023-10-04",
+  "supplier_name": "DIALLO HOLDINGS SA",
+  "supplier_tax_id": "ICE:000083928000058",
+  "destinataire": "TIMAR GROUPE YOLIVA IMPORT EXPORT",
+  "importateur": "N/A",
+  "port": "SENEGAL CARGO PORT AUTONOME DE DAKAR",
+  "moyen_transport": "SENEGAL CARGO",
+  "incoterm": "FOB",
+  "total_amount_excl_tax": 101000000.0,
+  "items": [
+    {
+      "description": "Arachides de Qualité A",
+      "quantity": 60000.0,
+      "unit_price": 350.0,
+      "total_price": 21000000.0
+    },
+    {
+      "description": "Noix de Cajou Premium",
+      "quantity": 35000.0,
+      "unit_price": 1200.0,
+      "total_price": 21000000.0
+    },
+    {
+      "description": "Huile de Palme",
+      "quantity": 25000.0,
+      "unit_price": 800.0,
+      "total_price": 20500000.0
+    },
+    {
+      "description": "Riz Grade A",
+      "quantity": 30000.0,
+      "unit_price": 500.0,
+      "total_price": 15000000.0
+    },
+    {
+      "description": "Coton de Grade Supérieur",
+      "quantity": 40000.0,
+      "unit_price": 600.0,
+      "total_price": 24000000.0
+    }
+  ],
+  "currency": "XOF",
+  "confidence_score": 1.0,
+  "extra_data": {
+    "pre_transport_by": "LIEU DE RECEPTION/P/ace",
+    "main_transport_by": "IDENTITE DU MOYEN DE TRANSPORT/",
+    "place_of_loading": "LIEU DE CHARGEMENT/",
+    "port_of_discharge": "PORTDE TANGER MED",
+    "port_of_destination": "Port de Tanger Med",
+    "packing": 40065000.0,
+    "freight": 8850000.0,
+    "other_costs": 20950000.0,
+    "insurance": 8750000.0,
+    "total_charges": 81765000.0,
+    "total_deductions": 10000000.0,
+    "total_to_pay": 91765000.0
+  }
+}

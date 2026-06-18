@@ -9,11 +9,12 @@ Responsabilités :
 """
 import os
 import json
+import time
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import List, Tuple
 
-import google.generativeai as genai
+from openai import OpenAI
 
 from app.core.aspect import handle_exceptions
 from app.core.exceptions import ExtractionError
@@ -24,47 +25,48 @@ from app.models.invoice import Invoice, InvoiceItem
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _SYSTEM_PROMPT = """
-**System Role:**
-You are an elite Global Document Intelligence Agent. Your mission is to extract highly accurate, structured data from raw, noisy OCR text of any invoice type (Standard, Commercial, Freight, International, Proforma).
+Tu es un expert en extraction de données OCR. Ta mission est de lire le texte brut suivant et de le convertir STRICTEMENT selon le format JSON ci-dessous.
 
-**Core Directives & Logic:**
-1. **Adaptive Extraction:** Scan the document for standard billing details AND international trade details (Consignee, Buyer, Port, Transport, Incoterms).
-2. **OMIT MISSING DATA (STRICT RULE):** If a specific piece of information is NOT explicitly found or confidently deduced from the text, DO NOT include its key in the JSON output. Never output `null` values; simply omit the key entirely.
-3. **Math & Logic Validation:** Cross-check `Subtotal + Tax = Grand Total`. If numbers are misread by OCR (e.g., '0' instead of 'O'), use math to deduce the correct value.
-4. **Data Formatting:**
-   - Dates: Strict `YYYY-MM-DD` format.
-   - Amounts: Strict float format (e.g., `1500.50`). Strip all spaces, letters, and currency symbols.
-   - Currency: Deduce the 3-letter ISO code (e.g., MAD, XOF, EUR, USD).
+RÈGLES STRICTES :
+1. RESPECT DU SCHÉMA : Tu dois utiliser EXACTEMENT les clés fournies dans l'exemple JSON. Ne modifie pas les noms des clés principales.
+2. DONNÉES MANQUANTES : Si une information n'est pas présente dans le texte, mets la valeur à null. N'invente rien.
+3. LE CHAMP EXTRA_DATA (IMPORTANT) : Si tu trouves des informations importantes dans la facture (comme les coordonnées bancaires, clauses, conditions de paiement, numéros de RC/ICE, incoterms, adresses complètes, contacts) qui n'ont pas de place dans les clés principales, tu DOIS les ajouter sous forme de paires clé/valeur à l'intérieur de l'objet extra_data.
+4. GESTION DES TABLEAUX : Reconstruis intelligemment les lignes de facturation. Aligne correctement les descriptions, quantités, prix unitaires et montants, même si l'OCR les a décalés.
+5. CONFIDENCE SCORE : Mets toujours 1.0 si l'extraction s'est bien passée.
+6. FORMAT DE SORTIE : Renvoie UNIQUEMENT un objet JSON valide, sans aucun texte autour, sans balises Markdown.
+7. REFERENCES LIGNES OCR : Chaque ligne de texte brut commence par un identifiant `[ID]`. Dans ta réponse JSON, ajoute une clé `ocr_line_references` qui associe le nom exact de chaque clé extraite à un tableau contenant l'identifiant (ID) ou les identifiants des lignes d'où tu as tiré la valeur. N'inclus PAS les `[ID]` dans les valeurs extraites elles-mêmes. Par exemple: `"ocr_line_references": {"supplier_name": [0], "total_amount_incl_tax": [45, 46]}`. Ne renvoie AUCUNE coordonnée (x, y), seulement l'ID de la ligne.
 
-**Target JSON Schema (Use keys ONLY if data is present):**
+FORMAT JSON STRICT À RESPECTER :
 {
-  "invoice_number": "string",
-  "date": "YYYY-MM-DD",
-  "supplier_name": "string (Exporter / Seller / Biller)",
-  "supplier_tax_id": "string (ICE, VAT, SIRET, RC)",
-  "destinataire": "string (Consignee / Entity receiving goods)",
-  "importateur": "string (Buyer / Acheteur)",
-  "port": "string (Port of loading/discharge)",
-  "moyen_transport": "string (Transport method / Vessel / Carrier)",
-  "incoterm": "string (e.g., FOB, CIF, EXW)",
-  "amounts": {
-    "total_excl_tax": "float (HT / Subtotal)",
-    "tax_amount": "float (TVA / Tax)",
-    "total_incl_tax": "float (TTC / Grand Total)"
-  },
-  "currency": "string",
+  "invoice_number": "string | null",
+  "date": "YYYY-MM-DD | null",
+  "supplier_name": "string | null",
+  "supplier_tax_id": "string | null",
+  "destinataire": "string | null",
+  "importateur": "string | null",
+  "port": "string | null",
+  "moyen_transport": "string | null",
+  "incoterm": "string | null",
+  "total_amount_excl_tax": "number | null",
+  "tax_amount": "number | null",
+  "total_amount_incl_tax": "number | null",
   "items": [
     {
       "description": "string",
-      "quantity": "float",
-      "unit_price": "float",
-      "total_price": "float"
+      "quantity": "number | null",
+      "unit_price": "number | null",
+      "total_price": "number | null"
     }
   ],
-  "confidence_score": "float (0.0 to 1.0)"
+  "currency": "string | null",
+  "confidence_score": 1.0,
+  "extra_data": {
+    "cle_dynamique": "toute donnée utile non couverte par les clés principales (banque, ICE, RC, IBAN, SWIFT, adresse, conditions paiement, mentions légales, etc.)"
+  },
+  "ocr_line_references": {
+    "nom_du_champ_principal_ou_extra": [0]
+  }
 }
-
-**Output format:** Return pure JSON only. Do not use markdown formatting blocks (no ```json). do it for any fuckin,g type of facture
 """
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -73,33 +75,22 @@ You are an elite Global Document Intelligence Agent. Your mission is to extract 
 
 class Extractor:
     """
-    Agentic Extractor propulsé par LLM (Gemini).
+    Agentic Extractor propulsé par LLM (Gemini via API Google).
     """
 
     def __init__(self):
-        """Initialise le modèle LLM à partir de la clé API présente dans l'environnement."""
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise ExtractionError("La clé GEMINI_API_KEY n'est pas définie dans l'environnement.")
-        
-        genai.configure(api_key=api_key)
-        
-        # Configuration stricte pour outputer systématiquement du JSON
-        generative_config = genai.types.GenerationConfig(
-            temperature=0.0,
-            response_mime_type="application/json"
+        """Initialise le client OpenAI pour pointer vers l'API Gemini de Google."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        self.client = OpenAI(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key=api_key
         )
-        
-        self.model = genai.GenerativeModel(
-            model_name='gemini-2.5-flash',
-            system_instruction=_SYSTEM_PROMPT,
-            generation_config=generative_config
-        )
+        self.model_name = "gemini-2.5-flash"
 
     # ── API publique ────────────────────────────────────────────────────────
 
     @handle_exceptions(Exception, raise_as=ExtractionError)
-    def extract(self, ocr_results: List[Tuple[str, float]]) -> Invoice:
+    def extract(self, ocr_results: List[dict]) -> Invoice:
         """
         Passe le texte OCR à l'Agent et mappe le JSON retourné vers l'objet Invoice.
         """
@@ -109,18 +100,37 @@ class Extractor:
             f"Analyze this raw OCR text stream and extract the required fields as specified:\n\n{raw_text}"
         )
         
-        # Appel LLM (Synchrone)
-        response = self.model.generate_content(prompt_context)
-        llm_json = self._parse_json(response.text)
+        # Appel LLM (Synchrone) avec retry
+        max_retries = 4
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt_context}
+                    ],
+                    temperature=0.0,
+                    response_format={"type": "json_object"}
+                )
+                break
+            except Exception as e:
+                if "503" in str(e) and attempt < max_retries - 1:
+                    print(f"[DEBUG] L'API Gemini est surchargée (503). Nouvelle tentative dans {2 ** attempt}s... (Essai {attempt + 1}/{max_retries})")
+                    time.sleep(2 ** attempt)
+                else:
+                    raise
+        
+        llm_json = self._parse_json(response.choices[0].message.content)
         
         return self._map_to_invoice(llm_json)
 
     # ── Méthodes privées ────────────────────────────────────────────────────
 
     @staticmethod
-    def _build_raw_text(ocr_results: List[Tuple[str, float]]) -> str:
-        """Concatène tous les blocs OCR en un seul texte."""
-        return "\n".join(text for text, _ in ocr_results)
+    def _build_raw_text(ocr_results: List[dict]) -> str:
+        """Concatène tous les blocs OCR en un seul texte avec leur ID de ligne."""
+        return "\n".join(f"[{i}] {res['text']}" for i, res in enumerate(ocr_results))
 
     @staticmethod
     def _parse_json(text: str) -> dict:
@@ -145,30 +155,27 @@ class Extractor:
             return None
 
     def _map_to_invoice(self, data: dict) -> Invoice:
-        """Convertit le dictionnaire JSON LLM vers l'objet Invoice natif du projet."""
-        
-        # Parse la Date
+        """Convertit le dictionnaire JSON LLM (schéma fixe) vers l'objet Invoice."""
+
+        # ── Date ───────────────────────────────────────────────────────────
         parsed_date = None
         raw_date = data.get("date")
         if raw_date:
             try:
-                parsed_date = date.fromisoformat(raw_date)
+                parsed_date = date.fromisoformat(str(raw_date))
             except ValueError:
                 pass
-                
-        # Construit les items
+
+        # ── Line items ─────────────────────────────────────────────────────
         items = []
-        for it in data.get("items", []):
+        for it in (data.get("items") or []):
             items.append(InvoiceItem(
                 description=it.get("description", ""),
-                quantity=float(it.get("quantity", 0.0) or 0.0),
-                unit_price=self._parse_decimal(it.get("unit_price")) or Decimal('0.0'),
-                total_price=self._parse_decimal(it.get("total_price")) or Decimal('0.0')
+                quantity=float(it.get("quantity") or 0.0),
+                unit_price=self._parse_decimal(it.get("unit_price")) or Decimal("0.0"),
+                total_price=self._parse_decimal(it.get("total_price")) or Decimal("0.0"),
             ))
-            
-        # Extrait les montants du sous-objet
-        amounts = data.get("amounts", {})
-        
+
         return Invoice(
             invoice_number=data.get("invoice_number"),
             date=parsed_date,
@@ -179,10 +186,12 @@ class Extractor:
             port=data.get("port"),
             moyen_transport=data.get("moyen_transport"),
             incoterm=data.get("incoterm"),
-            total_amount_excl_tax=self._parse_decimal(amounts.get("total_excl_tax")),
-            tax_amount=self._parse_decimal(amounts.get("tax_amount")),
-            total_amount_incl_tax=self._parse_decimal(amounts.get("total_incl_tax")),
+            total_amount_excl_tax=self._parse_decimal(data.get("total_amount_excl_tax")),
+            tax_amount=self._parse_decimal(data.get("tax_amount")),
+            total_amount_incl_tax=self._parse_decimal(data.get("total_amount_incl_tax")),
             currency=data.get("currency"),
             items=items,
             confidence_score=float(data.get("confidence_score") or 0.0),
+            extra_data=data.get("extra_data") or {},
+            ocr_line_references=data.get("ocr_line_references") or {},
         )

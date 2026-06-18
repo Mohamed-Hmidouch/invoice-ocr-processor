@@ -1,0 +1,88 @@
+{
+  "invoice_number": "A1432b85",
+  "date": "2023-10-04",
+  "supplier_name": "DIALLO HOLDINGS S.A",
+  "supplier_tax_id": null,
+  "destinataire": "TIMAR GROUPE",
+  "importateur": "YOLIVA IMPORT EXPORT",
+  "port": "Port de Tanger Med",
+  "moyen_transport": "SENEGAL CARGO",
+  "incoterm": "FOB",
+  "total_amount_excl_tax": 101500000.0,
+  "tax_amount": null,
+  "total_amount_incl_tax": 101000000.0,
+  "items": [
+    {
+      "description": "Arachides de Qualité A",
+      "quantity": 60000.0,
+      "unit_price": 350.0,
+      "total_price": 21000000.0,
+      "tax_rate": null
+    },
+    {
+      "description": "Noix de Cajou Premium",
+      "quantity": 35000.0,
+      "unit_price": 1200.0,
+      "total_price": 21000000.0,
+      "tax_rate": null
+    },
+    {
+      "description": "Huile de Palme",
+      "quantity": 25000.0,
+      "unit_price": 800.0,
+      "total_price": 20500000.0,
+      "tax_rate": null
+    },
+    {
+      "description": "Riz Grade A",
+      "quantity": 30000.0,
+      "unit_price": 500.0,
+      "total_price": 15000000.0,
+      "tax_rate": null
+    },
+    {
+      "description": "Coton de Grade Supérieur",
+      "quantity": 40000.0,
+      "unit_price": 600.0,
+      "total_price": 24000000.0,
+      "tax_rate": null
+    }
+  ],
+  "currency": "XOF",
+  "confidence_score": 1.0,
+  "extra_data": {
+    "exporter_address": "Ouest Foire Villa Lot 36 Près de la station Elton en face de SENEGAL - JAPON - DAKAR / SENEGAL",
+    "number_of_sheets": "1",
+    "other_references": "A1432b85",
+    "seller_bank_name": "UBA",
+    "seller_bank_account_number": "SN153 01370 3505 00158620 32",
+    "country_of_origin": "Senegal",
+    "consignee_company_name": "TIMAR GROUPE",
+    "consignee_address": "quartier Oukacha, 20580 immeuble.1, rue 1, Ville : Casablanca, Pays : MAROC",
+    "consignee_phone": "+212 522676000",
+    "consignee_email": "timargroupe@gmail.com",
+    "consignee_rc": "40957 Casablanca",
+    "consignee_ice": "000083928000058",
+    "date_of_disposal": "13/10/2023",
+    "date_of_dispatch_requested": "20/10/2023",
+    "pre_carriage_by": "NDIAYE TRANSPORT S.A",
+    "place_of_receipt": "PORT DE TANGER MED",
+    "payment_terms_method": "VIREMENT BANCAIRE",
+    "place_of_loading": "PORT AUTONOME DE DAKAR",
+    "place_of_discharge": "Port de Tanger Med",
+    "place_of_destination": "Port de Tanger Med",
+    "packing_cost": "8,850,000 XOF",
+    "freight_cost": "20,950,000 XOF",
+    "other_costs_amount": "8,750,000 XOF",
+    "insurance_cost": "1,515,000 XOF",
+    "total_charges": "40,065,000 XOF",
+    "total_deductions": "10,000,000 XOF",
+    "deductions_amount": "10.000.000 XOF",
+    "total_to_pay": "101,000,000 XOF",
+    "particular_clauses": "Le vendeur est responsable d'obtenir tous les visas et autres autorisations nécessaires pour l'exportation des marchandises. Tous les coûts associés sont à la charge du vendeur.",
+    "payment_terms_details": "Le paiement intégral doit être effectué dans les 30 jours suivant la date de la facture.",
+    "required_documents_details": "L'acheteur est responsable de tous les documents d'importation requis, y compris les licences. Les marchandises sont assurées jusqu'à leur lieu de destination. Toute perte ou dommage pendant le transit est de la responsabilité de l'acheteur une fois les marchandises remises au transporteur.",
+    "contact_person_name": "Amadou kaba",
+    "contact_person_tel": "33 823 45 56"
+  }
+}

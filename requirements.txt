@@ -1,1 +1,10 @@
 paddleocr>=2.6.1.3
+openai>=1.0.0
+python-dotenv>=1.0.0
+filetype>=1.2.0
+werkzeug>=3.0.0
+psycopg2-binary>=2.9.0
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
+PyMuPDF>=1.24.0

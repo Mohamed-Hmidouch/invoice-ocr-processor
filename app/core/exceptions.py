@@ -35,3 +35,7 @@ class FileManagerError(InvoiceProcessorError):
 
 class SecurityValidationError(InvoiceProcessorError):
     """Exception levée pour des raisons de sécurité (trop gros, mauvais MIME, Path Traversal)."""
+
+
+class DatabaseError(InvoiceProcessorError):
+    """Erreur liée à la persistance PostgreSQL (connexion, insertion, transaction)."""

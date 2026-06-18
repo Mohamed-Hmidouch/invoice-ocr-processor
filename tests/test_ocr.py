@@ -16,30 +16,29 @@ from app.core.exceptions import ExtractionError
 from app.core.extractor import Extractor
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TESTS AGENTIC EXTRACTOR (GEMINI)
+# TESTS AGENTIC EXTRACTOR (GEMINI via API GOOGLE)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_extractor_missing_api_key(monkeypatch):
-    """Vérifie que l'extracteur crash net au démarrage si la clé API manque."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    with pytest.raises(ExtractionError, match="GEMINI_API_KEY n'est pas définie"):
-        Extractor()
+@patch("app.core.extractor.OpenAI")
+def test_extractor_initialization(mock_openai_class):
+    """Vérifie que l'extracteur s'initialise correctement avec OpenAI."""
+    extractor = Extractor()
+    assert extractor.model_name == "gemini-2.5-flash"
 
-@patch("app.core.extractor.genai.GenerativeModel")
-def test_agentic_extractor_success_mapping(mock_model_class, monkeypatch):
+@patch("app.core.extractor.OpenAI")
+def test_agentic_extractor_success_mapping(mock_openai_class):
     """
     Simule une réponse LLM parfaite incluant des données de Freight/Douane
     afin de vérifier le parsing vers l'objet `Invoice`.
     """
-    monkeypatch.setenv("GEMINI_API_KEY", "dummy_key_for_test")
-    
     # Prépare le Mock
-    mock_instance = MagicMock()
-    mock_model_class.return_value = mock_instance
+    mock_client = MagicMock()
+    mock_openai_class.return_value = mock_client
     
     # Construit la fausse réponse de l'Agent LLM (avec markdown simulé)
     mock_response = MagicMock()
-    mock_response.text = '''```json
+    mock_choice = MagicMock()
+    mock_choice.message.content = '''```json
     {
         "invoice_number": "INV-100",
         "date": "2024-01-15",
@@ -47,11 +46,9 @@ def test_agentic_extractor_success_mapping(mock_model_class, monkeypatch):
         "supplier_tax_id": "ICE123",
         "destinataire": "CLIENT RECEIVER",
         "incoterm": "FOB",
-        "amounts": {
-            "total_excl_tax": 1000.0,
-            "tax_amount": 200.0,
-            "total_incl_tax": 1200.0
-        },
+        "total_amount_excl_tax": 1000.0,
+        "tax_amount": 200.0,
+        "total_amount_incl_tax": 1200.0,
         "currency": "MAD",
         "items": [
             {
@@ -64,7 +61,8 @@ def test_agentic_extractor_success_mapping(mock_model_class, monkeypatch):
         "confidence_score": 0.99
     }
     ```'''
-    mock_instance.generate_content.return_value = mock_response
+    mock_response.choices = [mock_choice]
+    mock_client.chat.completions.create.return_value = mock_response
 
     # Exécute
     extractor = Extractor()
@@ -91,20 +89,21 @@ def test_agentic_extractor_success_mapping(mock_model_class, monkeypatch):
     assert isinstance(invoice.items[0], InvoiceItem)
     assert invoice.items[0].description == "Laptop Pro"
 
-@patch("app.core.extractor.genai.GenerativeModel")
-def test_agentic_extractor_tolerate_missing_fields(mock_model_class, monkeypatch):
+@patch("app.core.extractor.OpenAI")
+def test_agentic_extractor_tolerate_missing_fields(mock_openai_class):
     """
     Test la résilience si l'Agent se plie à la règle de : 
     "NEUTRALISER (omettre) LES CLÉS MANQUANTES".
     """
-    monkeypatch.setenv("GEMINI_API_KEY", "dummy_key_for_test")
-    mock_instance = MagicMock()
-    mock_model_class.return_value = mock_instance
+    mock_client = MagicMock()
+    mock_openai_class.return_value = mock_client
     
     # JSON incomplet
     mock_response = MagicMock()
-    mock_response.text = '{"supplier_name": "MINIMALIST VENDOR"}'
-    mock_instance.generate_content.return_value = mock_response
+    mock_choice = MagicMock()
+    mock_choice.message.content = '{"supplier_name": "MINIMALIST VENDOR"}'
+    mock_response.choices = [mock_choice]
+    mock_client.chat.completions.create.return_value = mock_response
 
     extractor = Extractor()
     invoice = extractor.extract([("MINIMALIST VENDOR", 0.9)])

@@ -156,9 +156,10 @@ class FileManager:
         stem = Path(source_filename).stem
         json_path = self._json_dir / f"{stem}.json"
 
-        data = asdict(invoice)
+        output = asdict(invoice)
+
         json_path.write_text(
-            json.dumps(data, cls=_InvoiceJSONEncoder, indent=2, ensure_ascii=False),
+            json.dumps(output, cls=_InvoiceJSONEncoder, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         return json_path

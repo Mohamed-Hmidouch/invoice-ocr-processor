@@ -1,0 +1,38 @@
+###############################################################################
+# Docker Compose — PostgreSQL pour le pipeline Invoice Processor
+#
+# Usage :
+#   docker compose up -d          → Démarrer la base
+#   docker compose down           → Arrêter (données persistées dans le volume)
+#   docker compose down -v        → Arrêter ET supprimer les données
+###############################################################################
+
+services:
+  invoice-db:
+    image: postgres:16-alpine
+    container_name: invoice-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-invoice_db}
+      POSTGRES_USER:     ${POSTGRES_USER:-invoice_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-invoice_pass}
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      # Données persistantes
+      - pgdata:/var/lib/postgresql/data
+      # Script d'initialisation (exécuté une seule fois, au premier lancement)
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-invoice_user} -d ${POSTGRES_DB:-invoice_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+    driver: local
