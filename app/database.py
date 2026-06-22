@@ -69,7 +69,8 @@ class DatabaseManager:
         SELECT id, invoice_number, invoice_date, supplier_name, supplier_tax_id,
                destinataire, importateur, port, moyen_transport, incoterm,
                total_amount_excl_tax, tax_amount, total_amount_incl_tax,
-               currency, confidence_score, extra_data, ocr_data, source_filename, created_at
+               currency, confidence_score, extra_data, ocr_data, source_filename, created_at,
+               confirmed_by_user_id, confirmed_at
         FROM invoices
         ORDER BY created_at DESC;
     """
@@ -78,7 +79,8 @@ class DatabaseManager:
         SELECT id, invoice_number, invoice_date, supplier_name, supplier_tax_id,
                destinataire, importateur, port, moyen_transport, incoterm,
                total_amount_excl_tax, tax_amount, total_amount_incl_tax,
-               currency, confidence_score, extra_data, ocr_data, source_filename, created_at
+               currency, confidence_score, extra_data, ocr_data, source_filename, created_at,
+               confirmed_by_user_id, confirmed_at
         FROM invoices
         WHERE id = %s;
     """
@@ -326,6 +328,58 @@ class DatabaseManager:
             self._serialize_row(invoice)
 
             return invoice
+        finally:
+            cursor.close()
+
+    @handle_exceptions(Exception, raise_as=DatabaseError)
+    def update_invoice(self, invoice_id: int, data: dict, user_id: int = None) -> dict | None:
+        """Met à jour les champs de base d'une facture, avec confirmation."""
+        if not data and not user_id:
+            return self.get_invoice_by_id(invoice_id)
+            
+        field_map = {"date": "invoice_date"}
+        set_clauses = []
+        values = []
+        
+        for key, value in data.items():
+            if key == "extra_data":
+                from psycopg2.extras import Json
+                set_clauses.append("extra_data = extra_data || %s")
+                values.append(Json(value))
+            elif key not in ["id", "ocr_data", "items"]:
+                col = field_map.get(key, key)
+                set_clauses.append(f"{col} = %s")
+                values.append(value)
+                
+        if user_id is not None:
+            set_clauses.append("confirmed_by_user_id = %s")
+            values.append(user_id)
+            set_clauses.append("confirmed_at = NOW()")
+            
+        if not set_clauses:
+             return self.get_invoice_by_id(invoice_id)
+             
+        values.append(invoice_id)
+        sql = f"UPDATE invoices SET {', '.join(set_clauses)} WHERE id = %s"
+        
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(sql, tuple(values))
+            self._conn.commit()
+            return self.get_invoice_by_id(invoice_id)
+        except Exception:
+            self._conn.rollback()
+            raise
+        finally:
+            cursor.close()
+
+    @handle_exceptions(Exception, raise_as=DatabaseError)
+    def get_user_by_username(self, username: str) -> dict | None:
+        cursor = self._conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cursor.execute("SELECT id, username, hashed_password FROM users WHERE username = %s;", (username,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
         finally:
             cursor.close()
 

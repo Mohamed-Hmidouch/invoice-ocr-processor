@@ -18,14 +18,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
 from app.database import DatabaseManager
 from app.core import OCREngine, Extractor
 from app.core.exceptions import InvoiceProcessorError
+from app.core.auth import Token, create_access_token, verify_password, get_current_user
 
 
 # Formats de fichiers acceptés par l'endpoint d'upload
@@ -74,6 +76,22 @@ class InvoiceCreate(BaseModel):
     extra_data: dict = Field(default_factory=dict)
     source_filename: str = Field(default="api_upload")
 
+class InvoiceUpdate(BaseModel):
+    """Schéma de mise à jour/confirmation d'une facture."""
+    invoice_number: Optional[str] = None
+    date: Optional[str] = None
+    supplier_name: Optional[str] = None
+    supplier_tax_id: Optional[str] = None
+    destinataire: Optional[str] = None
+    importateur: Optional[str] = None
+    port: Optional[str] = None
+    moyen_transport: Optional[str] = None
+    incoterm: Optional[str] = None
+    total_amount_excl_tax: Optional[float] = None
+    tax_amount: Optional[float] = None
+    total_amount_incl_tax: Optional[float] = None
+    currency: Optional[str] = None
+    extra_data: Optional[dict] = None
 
 class InvoiceItemResponse(BaseModel):
     """Schéma d'une ligne de facturation (sortie)."""
@@ -106,6 +124,8 @@ class InvoiceResponse(BaseModel):
     ocr_data: Optional[dict] = Field(default_factory=dict)
     source_filename: Optional[str] = None
     created_at: Optional[str] = None
+    confirmed_by_user_id: Optional[int] = None
+    confirmed_at: Optional[str] = None
     items: List[InvoiceItemResponse] = Field(default_factory=list)
 
 
@@ -156,7 +176,27 @@ app.add_middleware(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ENDPOINTS
+# ENDPOINTS AUTH
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = db_manager.get_user_by_username(form_data.username)
+    if not user or not verify_password(form_data.password, user["hashed_password"]):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token = create_access_token(data={"sub": str(user["id"]), "username": user["username"]})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/users/me", summary="Get current user info")
+async def read_users_me(current_user: dict = Depends(get_current_user)):
+    return current_user
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ENDPOINTS FACTURES
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.post(
@@ -226,6 +266,34 @@ def get_invoice_by_id(invoice_id: int):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération : {exc}")
+
+@app.patch(
+    "/invoices/{invoice_id}",
+    response_model=InvoiceResponse,
+    summary="Mettre à jour et/ou confirmer une facture",
+)
+def update_invoice(
+    invoice_id: int, 
+    updates: InvoiceUpdate, 
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    PATCH /invoices/{invoice_id}
+    Permet de modifier les champs de la facture et enregistre l'utilisateur
+    qui a confirmé l'opération via le token JWT fourni.
+    """
+    existing = db_manager.get_invoice_by_id(invoice_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"Facture avec id={invoice_id} introuvable.")
+    
+    update_data = updates.model_dump(exclude_unset=True, exclude_none=False)
+    
+    updated = db_manager.update_invoice(
+        invoice_id=invoice_id, 
+        data=update_data, 
+        user_id=current_user["user_id"]
+    )
+    return updated
 
 @app.get("/files/{filename}", summary="Récupérer un fichier source")
 def get_file(filename: str):
