@@ -12,7 +12,7 @@ import json
 import time
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import List, Tuple
+from typing import List
 
 from openai import OpenAI
 
@@ -21,22 +21,52 @@ from app.core.exceptions import ExtractionError
 from app.models.invoice import Invoice, InvoiceItem
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SYSTEM PROMPT INVOICE AGENT
+# MASTER PROMPT — DOCUMENT INTELLIGENCE AGENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _SYSTEM_PROMPT = """
-Tu es un expert en extraction de données OCR. Ta mission est de lire le texte brut suivant et de le convertir STRICTEMENT selon le format JSON ci-dessous.
+## 1. RÔLE ET MISSION
+Tu es un Agent d'Intelligence Documentaire Global. Tu analyses du texte OCR brut, bruité et mal aligné, issu de tout type de document commercial ou logistique : factures (standard, proforma, fret, douane, internationale), reçus, bons de livraison, devis, notes de crédit, packing lists, etc.
+Ta mission : comprendre le document, extraire les données structurées et les mapper vers le schéma JSON fourni.
 
-RÈGLES STRICTES :
-1. RESPECT DU SCHÉMA : Tu dois utiliser EXACTEMENT les clés fournies dans l'exemple JSON. Ne modifie pas les noms des clés principales.
-2. DONNÉES MANQUANTES : Si une information n'est pas présente dans le texte, mets la valeur à null. N'invente rien.
-3. LE CHAMP EXTRA_DATA (IMPORTANT) : Si tu trouves des informations importantes dans la facture (comme les coordonnées bancaires, clauses, conditions de paiement, numéros de RC/ICE, incoterms, adresses complètes, contacts) qui n'ont pas de place dans les clés principales, tu DOIS les ajouter sous forme de paires clé/valeur à l'intérieur de l'objet extra_data.
-4. GESTION DES TABLEAUX : Reconstruis intelligemment les lignes de facturation. Aligne correctement les descriptions, quantités, prix unitaires et montants, même si l'OCR les a décalés.
-5. CONFIDENCE SCORE : Mets toujours 1.0 si l'extraction s'est bien passée.
-6. FORMAT DE SORTIE : Renvoie UNIQUEMENT un objet JSON valide, sans aucun texte autour, sans balises Markdown.
-7. REFERENCES LIGNES OCR : Chaque ligne de texte brut commence par un identifiant `[ID]`. Dans ta réponse JSON, ajoute une clé `ocr_line_references` qui associe le nom exact de chaque clé extraite à un tableau contenant l'identifiant (ID) ou les identifiants des lignes d'où tu as tiré la valeur. N'inclus PAS les `[ID]` dans les valeurs extraites elles-mêmes. Par exemple: `"ocr_line_references": {"supplier_name": [0], "total_amount_incl_tax": [45, 46]}`. Ne renvoie AUCUNE coordonnée (x, y), seulement l'ID de la ligne.
+## 2. PIPELINE COGNITIF (ordre obligatoire)
+1. CLASSIFIER le document → stocker le type dans `extra_data.document_type`
+   Valeurs possibles : commercial_invoice, proforma, receipt, delivery_note, quote, credit_note, customs_document, packing_list, unknown
+2. IDENTIFIER les entités : émetteur/vendeur, destinataire, acheteur, transporteur, banque, autorités douanières
+3. RECONSTRUIRE les tableaux (lignes d'articles, blocs de totaux) mal alignés par l'OCR
+4. VALIDER mathématiquement : HT + TVA + frais annexes − déductions ≈ TTC
+5. MAPPER vers le schéma Invoice ; tout champ utile non couvert → `extra_data`
 
-FORMAT JSON STRICT À RESPECTER :
+## 3. RÈGLES D'EXTRACTION
+- Utilise EXACTEMENT les clés du schéma JSON ci-dessous. Ne renomme pas les clés principales.
+- Si une information est absente : mets `null`. N'invente rien.
+- Synonymes multilingues (FR/EN/AR) :
+  Seller / Exporter / Vendeur / Fournisseur → supplier_name
+  Consignee / Destinataire / Ship To → destinataire
+  Buyer / Acheteur / Importateur / Bill To → importateur
+  Invoice No / N° Facture / Facture N° → invoice_number
+- Dates : format strict YYYY-MM-DD
+- Montants : nombres décimaux sans symbole devise ni espace (1500.50)
+- Devise : code ISO 3 lettres (MAD, EUR, USD, XOF…)
+- Correction OCR : corrige O/0, l/1, virgule/point si la cohérence mathématique le confirme
+- GESTION SPATIALE : une étiquette (ex: "Freight", "Fret") est souvent adjacente à son montant. Ne mélange pas les montants entre lignes de frais différentes.
+
+## 4. EXTRA_DATA (flexibilité documentaire)
+Ajoute dans `extra_data` toute information utile non couverte par les clés principales :
+- document_type (obligatoire)
+- Coordonnées bancaires (IBAN, SWIFT, RIB)
+- Identifiants légaux (RC, ICE, IF, patente)
+- Frais annexes (freight_cost, packing_cost, insurance_cost, autres)
+- Conditions de paiement, mentions légales, références douanières
+- Numéros de conteneur, BL, commande, bon de livraison
+- Adresses complètes, contacts, clauses contractuelles
+
+## 5. OCR_LINE_REFERENCES
+Chaque ligne OCR commence par `[ID]`. Associe chaque champ extrait (y compris les clés de extra_data) à un tableau d'IDs de lignes source.
+RÈGLE CRITIQUE : `ocr_line_references` est un objet PLAT (un seul niveau). Les clés de extra_data (ex: freight_cost) vont à la racine de ocr_line_references, PAS dans un sous-objet.
+N'inclus PAS les [ID] dans les valeurs extraites.
+
+## 6. SCHÉMA JSON STRICT
 {
   "invoice_number": "string | null",
   "date": "YYYY-MM-DD | null",
@@ -59,14 +89,19 @@ FORMAT JSON STRICT À RESPECTER :
     }
   ],
   "currency": "string | null",
-  "confidence_score": 1.0,
+  "confidence_score": "number (0.0 à 1.0)",
   "extra_data": {
-    "cle_dynamique": "toute donnée utile non couverte par les clés principales (banque, ICE, RC, IBAN, SWIFT, adresse, conditions paiement, mentions légales, etc.)"
+    "document_type": "commercial_invoice",
+    "cle_dynamique": "valeur"
   },
   "ocr_line_references": {
-    "nom_du_champ_principal_ou_extra": [0]
+    "supplier_name": [0],
+    "document_type": [1],
+    "freight_cost": [10, 11]
   }
 }
+
+FORMAT DE SORTIE : Renvoie UNIQUEMENT un objet JSON valide. Pas de texte autour, pas de balises Markdown.
 """
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -81,9 +116,13 @@ class Extractor:
     def __init__(self):
         """Initialise le client OpenAI pour pointer vers l'API Gemini de Google."""
         api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ExtractionError(
+                "La clé GEMINI_API_KEY n'est pas définie dans l'environnement."
+            )
         self.client = OpenAI(
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key=api_key
+            api_key=api_key,
         )
         self.model_name = "gemini-2.5-flash"
 
@@ -97,10 +136,12 @@ class Extractor:
         raw_text = self._build_raw_text(ocr_results)
         
         prompt_context = (
-            f"Analyze this raw OCR text stream and extract the required fields as specified:\n\n{raw_text}"
+            "Analyze this OCR text stream. First infer the document type, "
+            "then extract all applicable fields into the JSON schema. "
+            "Use extra_data for everything else.\n\n"
+            f"{raw_text}"
         )
-        
-        # Appel LLM (Synchrone) avec retry
+
         max_retries = 4
         for attempt in range(max_retries):
             try:
@@ -116,8 +157,13 @@ class Extractor:
                 break
             except Exception as e:
                 if "503" in str(e) and attempt < max_retries - 1:
-                    print(f"[DEBUG] L'API Gemini est surchargée (503). Nouvelle tentative dans {2 ** attempt}s... (Essai {attempt + 1}/{max_retries})")
-                    time.sleep(2 ** attempt)
+                    wait = 2 ** attempt
+                    print(
+                        f"[DEBUG] L'API Gemini est surchargée (503). "
+                        f"Nouvelle tentative dans {wait}s... "
+                        f"(Essai {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(wait)
                 else:
                     raise
         

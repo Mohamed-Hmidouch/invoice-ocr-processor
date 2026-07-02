@@ -6,3 +6,7 @@ __pycache__/
 .env
 *.log
 data/uploads/
+test_deepseek.py
+test_llm.py
+test_llm2.py
+test_llm3.py
