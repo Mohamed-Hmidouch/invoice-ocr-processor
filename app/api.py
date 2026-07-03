@@ -11,12 +11,32 @@ Framework : FastAPI (validation Pydantic, docs Swagger automatiques).
 Sécurité  : Validation stricte des entrées via Pydantic, CORS configurable.
 """
 import os
-import os
+
+# ── Paddle / oneDNN flags — avant tout import PaddleOCR ─────────────────────
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_minloglevel", "3")
+os.environ.setdefault("FLAGS_enable_pir_api", "0")
+os.environ.setdefault("PADDLE_DISABLE_MKLDNN", "1")
+os.environ.setdefault("DNNL_MAX_CPU_ISA", "VANILLA")
+os.environ.setdefault("ONEDNN_MAX_CPU_ISA", "VANILLA")
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import shutil
 import uuid
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List
+
+# ── Logs clairs et homogènes pour toute l'application ────────────────────────
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("invoice_api")
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.responses import FileResponse
@@ -138,8 +158,6 @@ class InvoiceCreateResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 # LIFESPAN (Connexion DB gérée au démarrage / arrêt du serveur)
 # ═══════════════════════════════════════════════════════════════════════════════
-from dotenv import load_dotenv
-load_dotenv()
 
 db_manager = DatabaseManager()
 ocr_engine = OCREngine()
@@ -165,14 +183,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS (permet au frontend de communiquer avec l'API) ─────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],       # En prod : remplacer par le domaine du front
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ── CORS (origines autorisées chargées depuis l'environnement) ──────────────
+# CORS_ORIGINS = liste d'URL séparées par des virgules (ex:
+# "https://app.exemple.com,http://localhost:3000"). Défaut restrictif : vide.
+_cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    logger.info("CORS active pour les origines : %s", _cors_origins)
+else:
+    logger.info("CORS desactive (aucune origine dans CORS_ORIGINS).")
+
+
+@app.get("/health", summary="Verification de sante", tags=["monitoring"])
+def health_check():
+    """Endpoint léger pour le healthcheck Docker/compose."""
+    return {"status": "ok"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

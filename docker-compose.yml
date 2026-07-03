@@ -14,12 +14,12 @@ services:
     restart: unless-stopped
 
     environment:
-      POSTGRES_DB:       ${POSTGRES_DB:-invoice_db}
-      POSTGRES_USER:     ${POSTGRES_USER:-invoice_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-invoice_pass}
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT}:5432"
 
     volumes:
       # Données persistantes
@@ -28,10 +28,45 @@ services:
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-invoice_user} -d ${POSTGRES_DB:-invoice_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # ── API FastAPI + PaddleOCR ────────────────────────────────────────────────
+  invoice-api:
+    image: mohamedhmidouch/ocr-api:1.0.0
+    container_name: invoice-api
+    restart: unless-stopped
+
+    depends_on:
+      invoice-db:
+        condition: service_healthy
+
+    # Secrets et config charges depuis .env (jamais dans l'image)
+    env_file:
+      - .env
+
+    environment:
+      # Dans le reseau compose, la DB est joignable via le nom du service,
+      # pas via localhost. On surcharge donc POSTGRES_HOST.
+      POSTGRES_HOST: invoice-db
+      POSTGRES_PORT: 5432
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      # Fichiers uploades et sorties persistes hors de l'image
+      - ./data/uploads:/app/data/uploads
+      - ./data/output:/app/data/output
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health').status==200 else sys.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
 volumes:
   pgdata:

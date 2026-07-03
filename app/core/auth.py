@@ -1,4 +1,9 @@
+import os
 from datetime import datetime, timedelta, timezone
+
+from dotenv import load_dotenv
+
+load_dotenv()
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -6,9 +11,16 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 
-# Configuration for JWT
-# In production, these should be loaded from environment variables
-SECRET_KEY = "dummy-secret-key-for-development-do-not-use-in-prod"
+# ── Secret JWT — chargé UNIQUEMENT depuis l'environnement ────────────────────
+# Aucune valeur par défaut codée en dur : si la variable est absente, on échoue
+# immédiatement avec un message clair plutôt que d'utiliser un secret prévisible.
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY est requis mais absent de l'environnement. "
+        "Definissez-le (ex: openssl rand -hex 32) avant de demarrer l'application."
+    )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 hours
 

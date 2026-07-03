@@ -10,3 +10,6 @@ test_deepseek.py
 test_llm.py
 test_llm2.py
 test_llm3.py
+test_ocr.py
+test_ocr_empty.py
+test_ocr_thread.py

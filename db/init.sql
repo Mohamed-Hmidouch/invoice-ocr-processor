@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     -- Métadonnées
     source_filename       VARCHAR(255) NOT NULL,
     created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    confirmed_by_user_id  INTEGER,
+    confirmed_at          TIMESTAMPTZ,
 
     -- ── Contraintes de sécurité sur extra_data ──────────────────────────────
     -- 1. Doit être un objet JSON (pas un array, pas un scalar)
@@ -66,3 +68,26 @@ CREATE INDEX IF NOT EXISTS idx_invoices_created   ON invoices(created_at);
 -- Index GIN sur extra_data : permet les recherches rapides dans le JSONB
 -- Ex: SELECT * FROM invoices WHERE extra_data @> '{"iban": "FR76..."}';
 CREATE INDEX IF NOT EXISTS idx_invoices_extra_gin ON invoices USING GIN (extra_data);
+
+
+-- ─── Authentification (JWT) ──────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS users (
+    id              SERIAL       PRIMARY KEY,
+    username        VARCHAR(100) UNIQUE NOT NULL,
+    hashed_password VARCHAR(255) NOT NULL
+);
+
+-- Utilisateur admin par défaut (mot de passe : admin) — à changer en production
+INSERT INTO users (username, hashed_password)
+VALUES (
+    'admin',
+    '$2b$12$hA1IP592ROzqi4ntfqaRluVVX3CTJfj7bSw6ybUrIUNYws7h0mdzK'
+)
+ON CONFLICT (username) DO NOTHING;
+
+ALTER TABLE invoices
+    DROP CONSTRAINT IF EXISTS invoices_confirmed_by_user_id_fkey;
+ALTER TABLE invoices
+    ADD CONSTRAINT invoices_confirmed_by_user_id_fkey
+    FOREIGN KEY (confirmed_by_user_id) REFERENCES users(id);

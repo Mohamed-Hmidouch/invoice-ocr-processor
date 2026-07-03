@@ -95,12 +95,23 @@ class DatabaseManager:
     def __init__(self):
         """Prépare les paramètres de connexion depuis les variables d'environnement."""
         self._conn = None
+
+        # ── Mot de passe : AUCUN défaut codé en dur ─────────────────────────
+        # Un secret ne doit jamais avoir de valeur de repli prévisible. Si la
+        # variable est absente, on échoue tout de suite avec un message clair.
+        password = os.getenv("POSTGRES_PASSWORD")
+        if not password:
+            raise DatabaseError(
+                "POSTGRES_PASSWORD est requis mais absent de l'environnement. "
+                "Definissez-le avant de demarrer l'application."
+            )
+
         self._db_config = {
-            "dbname":   os.getenv("POSTGRES_DB",       "invoice_db"),
-            "user":     os.getenv("POSTGRES_USER",     "invoice_user"),
-            "password": os.getenv("POSTGRES_PASSWORD", "invoice_pass"),
-            "host":     os.getenv("POSTGRES_HOST",     "localhost"),
-            "port":     os.getenv("POSTGRES_PORT",     "5432"),
+            "dbname":   os.getenv("POSTGRES_DB",   "invoice_db"),
+            "user":     os.getenv("POSTGRES_USER", "invoice_user"),
+            "password": password,
+            "host":     os.getenv("POSTGRES_HOST", "localhost"),
+            "port":     os.getenv("POSTGRES_PORT", "5432"),
         }
 
     # ── Cycle de vie ────────────────────────────────────────────────────────
