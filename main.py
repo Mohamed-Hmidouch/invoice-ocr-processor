@@ -18,7 +18,7 @@ os.environ["ONEDNN_MAX_CPU_ISA"] = "VANILLA"  # Alias récent de DNNL_MAX_CPU_IS
 import sys
 from dotenv import load_dotenv
 
-# Charge les variables d'environnement depuis .env (ex: GEMINI_API_KEY)
+# Charge les variables d'environnement depuis .env (ex: NVIDIA_API_KEY)
 load_dotenv()
 
 from app import OCREngine, Extractor, FileManager, DatabaseManager, InvoiceProcessorError

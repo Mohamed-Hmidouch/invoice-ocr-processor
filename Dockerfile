@@ -52,10 +52,6 @@ COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
 
-# ── Code applicatif ──────────────────────────────────────────────────────────
-COPY --chown=appuser:appuser app/ ./app/
-COPY --chown=appuser:appuser main.py ./main.py
-
 # Dossiers de travail ecrivables par l'utilisateur non-root
 RUN mkdir -p /app/data/uploads /app/data/output \
     && chown -R appuser:appuser /app/data
@@ -63,8 +59,12 @@ RUN mkdir -p /app/data/uploads /app/data/output \
 USER appuser
 
 # ── Pre-telechargement des modeles PaddleOCR (baked dans l'image) ───────────
-# Execute en tant qu'appuser pour que le cache aille dans /home/appuser/.paddlex
+# Avant le COPY app/ pour que les changements de code n'invalident pas ce layer (~97 MB)
 RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='fr', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)"
+
+# ── Code applicatif (change souvent — layers legers) ─────────────────────────
+COPY --chown=appuser:appuser app/ ./app/
+COPY --chown=appuser:appuser main.py ./main.py
 
 EXPOSE 8000
 

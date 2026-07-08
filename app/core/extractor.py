@@ -3,8 +3,8 @@ Extracteur Agentique (LLM-based) de données structurées.
 
 Responsabilités :
     - Recevoir le texte brut de l'OCR.
-    - Contacter un LLM (e.g., Gemini) avec un "Master Prompt" stict pour 
-      l'extraction contextuelle et la validation mathématique.
+    - Contacter un LLM (NVIDIA Nemotron via NIM) avec un "Master Prompt" strict
+      pour l'extraction contextuelle et la validation mathématique.
     - Convertir le JSON renvoyé par le LLM en un objet de domaine `Invoice`.
 """
 import os
@@ -51,19 +51,28 @@ Ta mission : comprendre le document, extraire les données structurées et les m
 - Correction OCR : corrige O/0, l/1, virgule/point si la cohérence mathématique le confirme
 - GESTION SPATIALE : une étiquette (ex: "Freight", "Fret") est souvent adjacente à son montant. Ne mélange pas les montants entre lignes de frais différentes.
 
-## 4. EXTRA_DATA (flexibilité documentaire)
-Ajoute dans `extra_data` toute information utile non couverte par les clés principales :
-- document_type (obligatoire)
-- Coordonnées bancaires (IBAN, SWIFT, RIB)
-- Identifiants légaux (RC, ICE, IF, patente)
-- Frais annexes (freight_cost, packing_cost, insurance_cost, autres)
-- Conditions de paiement, mentions légales, références douanières
-- Numéros de conteneur, BL, commande, bon de livraison
-- Adresses complètes, contacts, clauses contractuelles
+## 4. EXTRA_DATA (flexibilité documentaire — groupes dynamiques)
+Organise `extra_data` en **sous-groupes métier dynamiques** selon le document analysé.
+- `document_type` reste obligatoire (scalaire à la racine OU dans le groupe `general`).
+- Crée **autant de groupes que nécessaire** (ex: `banking`, `transport`, `legal_ids`, `payment`, `customs`…).
+- Chaque groupe est un **objet JSON** dont les clés sont les champs du groupe.
+- Les champs scalaires isolés peuvent aller dans le groupe `general`.
+- N'utilise PAS une liste plate de dizaines de clés à la racine : regroupe par thème métier visible.
+- Exemples de contenu par groupe :
+  - banking : IBAN, SWIFT, RIB, comptes
+  - transport : ports, pays, conteneurs, BL
+  - legal_ids : ICE, RC, IF, EORI, patente
+  - payment : conditions, délais
+  - customs : références douanières, incoterms annexes
 
 ## 5. OCR_LINE_REFERENCES
-Chaque ligne OCR commence par `[ID]`. Associe chaque champ extrait (y compris les clés de extra_data) à un tableau d'IDs de lignes source.
-RÈGLE CRITIQUE : `ocr_line_references` est un objet PLAT (un seul niveau). Les clés de extra_data (ex: freight_cost) vont à la racine de ocr_line_references, PAS dans un sous-objet.
+Chaque ligne OCR commence par `[ID]`. Associe chaque champ extrait à un tableau d'IDs de lignes source.
+RÈGLE : `ocr_line_references` reste un objet **PLAT** (un seul niveau).
+- Champs principaux : clé directe (`supplier_name`, `invoice_number`…).
+- Champs `extra_data` imbriqués : clé `groupe_champ` avec underscore
+  (ex: `banking_iban`, `transport_port_of_loading`, `general_due_date`).
+  INTERDIT : ne préfixe JAMAIS avec `extra_data_` (faux : `extra_data_banking_iban`).
+- Tableaux `items` : tableau d'objets `{ "description": [73], "quantity": [75] }`.
 N'inclus PAS les [ID] dans les valeurs extraites.
 
 ## 6. SCHÉMA JSON STRICT
@@ -92,12 +101,25 @@ N'inclus PAS les [ID] dans les valeurs extraites.
   "confidence_score": "number (0.0 à 1.0)",
   "extra_data": {
     "document_type": "commercial_invoice",
-    "cle_dynamique": "valeur"
+    "general": {
+      "buyer_reference": "PO-12345"
+    },
+    "banking": {
+      "iban_eur": "FR76...",
+      "swift": "BNPAFRPP"
+    },
+    "transport": {
+      "port_of_loading": "CASABLANCA",
+      "country_of_destination": "Morocco"
+    }
   },
   "ocr_line_references": {
     "supplier_name": [0],
-    "document_type": [1],
-    "freight_cost": [10, 11]
+    "banking_iban_eur": [12],
+    "transport_port_of_loading": [20],
+    "items": [
+      { "description": [30], "quantity": [31], "total_price": [32] }
+    ]
   }
 }
 
@@ -110,21 +132,21 @@ FORMAT DE SORTIE : Renvoie UNIQUEMENT un objet JSON valide. Pas de texte autour,
 
 class Extractor:
     """
-    Agentic Extractor propulsé par LLM (Gemini via API Google).
+    Agentic Extractor propulsé par LLM (NVIDIA Nemotron Super 49B via NIM API).
     """
 
     def __init__(self):
-        """Initialise le client OpenAI pour pointer vers l'API Gemini de Google."""
-        api_key = os.getenv("GEMINI_API_KEY")
+        """Initialise le client OpenAI pour pointer vers l'API NVIDIA NIM."""
+        api_key = os.getenv("NVIDIA_API_KEY")
         if not api_key:
             raise ExtractionError(
-                "La clé GEMINI_API_KEY n'est pas définie dans l'environnement."
+                "La clé NVIDIA_API_KEY n'est pas définie dans l'environnement."
             )
         self.client = OpenAI(
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            base_url="https://integrate.api.nvidia.com/v1",
             api_key=api_key,
         )
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
 
     # ── API publique ────────────────────────────────────────────────────────
 
@@ -134,7 +156,7 @@ class Extractor:
         Passe le texte OCR à l'Agent et mappe le JSON retourné vers l'objet Invoice.
         """
         raw_text = self._build_raw_text(ocr_results)
-        
+
         prompt_context = (
             "Analyze this OCR text stream. First infer the document type, "
             "then extract all applicable fields into the JSON schema. "
@@ -142,36 +164,77 @@ class Extractor:
             f"{raw_text}"
         )
 
+        # Reasoning OFF = privilégie le champ content (JSON) plutôt que reasoning
+        system_content = "detailed thinking off\n\n" + _SYSTEM_PROMPT
+
         max_retries = 4
         for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt_context}
+                        {"role": "system", "content": system_content},
+                        {"role": "user", "content": prompt_context},
                     ],
-                    temperature=0.0,
-                    response_format={"type": "json_object"}
+                    # Params recommandés NVIDIA pour Nemotron Super 49B
+                    temperature=0.6,
+                    top_p=0.95,
+                    max_tokens=65536,
+                    frequency_penalty=0,
+                    presence_penalty=0,
+                    stream=False,
                 )
                 break
             except Exception as e:
                 if "503" in str(e) and attempt < max_retries - 1:
                     wait = 2 ** attempt
                     print(
-                        f"[DEBUG] L'API Gemini est surchargée (503). "
+                        f"[DEBUG] L'API NVIDIA NIM est surchargée (503). "
                         f"Nouvelle tentative dans {wait}s... "
                         f"(Essai {attempt + 1}/{max_retries})"
                     )
                     time.sleep(wait)
                 else:
                     raise
-        
-        llm_json = self._parse_json(response.choices[0].message.content)
-        
+
+        content = self._extract_message_content(response.choices[0].message)
+        if not content:
+            raise ExtractionError("Réponse vide du modèle NVIDIA Nemotron.")
+
+        llm_json = self._parse_json(content)
+
         return self._map_to_invoice(llm_json)
 
     # ── Méthodes privées ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_message_content(message) -> str:
+        """
+        Récupère le JSON depuis message.content.
+        Sur Nemotron, reasoning peut remplir les tokens avant content :
+        on tolère aussi un JSON embarqué dans reasoning en dernier recours.
+        """
+        content = getattr(message, "content", None)
+        if content and str(content).strip():
+            return str(content).strip()
+
+        # Fallback : dump complet de message (reasoning / reasoning_content)
+        dump = message.model_dump() if hasattr(message, "model_dump") else {}
+        for key in ("reasoning_content", "reasoning"):
+            blob = dump.get(key) or ""
+            if not blob:
+                continue
+            # Cherche le dernier objet JSON dans le reasoning
+            start = blob.rfind("{")
+            end = blob.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                candidate = blob[start : end + 1]
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    continue
+        return ""
 
     @staticmethod
     def _build_raw_text(ocr_results: List[dict]) -> str:
@@ -188,7 +251,14 @@ class Extractor:
             cleaned = cleaned[3:]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
-        return json.loads(cleaned.strip())
+        cleaned = cleaned.strip()
+        # Si du texte entoure le JSON, isole le premier objet
+        if not cleaned.startswith("{"):
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                cleaned = cleaned[start : end + 1]
+        return json.loads(cleaned)
 
     @staticmethod
     def _parse_decimal(value) -> Decimal:
@@ -239,5 +309,34 @@ class Extractor:
             items=items,
             confidence_score=float(data.get("confidence_score") or 0.0),
             extra_data=data.get("extra_data") or {},
-            ocr_line_references=data.get("ocr_line_references") or {},
+            ocr_line_references=self._normalize_ocr_line_references(
+                data.get("ocr_line_references") or {}
+            ),
         )
+
+    @staticmethod
+    def _normalize_ocr_line_references(refs: dict) -> dict:
+        """
+        Harmonise les clés OCR pour coller au contrat frontend.
+        Certains LLM préfixent `extra_data_` (ex: extra_data_banking_iban)
+        alors que le UI attend `banking_iban` / `banking.iban`.
+        """
+        if not isinstance(refs, dict):
+            return {}
+
+        normalized = {}
+        for key, value in refs.items():
+            if not isinstance(key, str):
+                continue
+            clean = key
+            while clean.startswith("extra_data_"):
+                clean = clean[len("extra_data_"):]
+            if clean.startswith("extra_data."):
+                clean = clean[len("extra_data."):].replace(".", "_")
+            # Garde la 1ère valeur si collision (clé déjà "propre")
+            if clean not in normalized:
+                normalized[clean] = value
+            # Conserve aussi la clé d'origine pour compat
+            if key not in normalized:
+                normalized[key] = value
+        return normalized

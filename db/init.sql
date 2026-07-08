@@ -20,11 +20,11 @@ CREATE TABLE IF NOT EXISTS invoices (
     importateur           VARCHAR(255),
     port                  VARCHAR(255),
     moyen_transport       VARCHAR(255),
-    incoterm              VARCHAR(10),
+    incoterm              VARCHAR(255),
     total_amount_excl_tax NUMERIC(15, 2),
     tax_amount            NUMERIC(15, 2),
     total_amount_incl_tax NUMERIC(15, 2),
-    currency              VARCHAR(10),
+    currency              VARCHAR(255),
     confidence_score      REAL         DEFAULT 0.0,
 
     -- Données dynamiques (JSONB sécurisé)

@@ -14,6 +14,7 @@ Sécurité :
       (échappement automatique, protection contre l'injection).
 """
 import os
+import re
 import logging
 from decimal import Decimal
 
@@ -85,6 +86,19 @@ class DatabaseManager:
         WHERE id = %s;
     """
 
+    _SELECT_INVOICE_BY_ORIGINAL_FILENAME = """
+        SELECT id, invoice_number, invoice_date, supplier_name, supplier_tax_id,
+               destinataire, importateur, port, moyen_transport, incoterm,
+               total_amount_excl_tax, tax_amount, total_amount_incl_tax,
+               currency, confidence_score, extra_data, ocr_data, source_filename, created_at,
+               confirmed_by_user_id, confirmed_at
+        FROM invoices
+        WHERE source_filename = %s
+           OR source_filename ~ %s
+        ORDER BY created_at DESC
+        LIMIT 1;
+    """
+
     _SELECT_ITEMS_BY_INVOICE_ID = """
         SELECT id, description, quantity, unit_price, total_price, tax_rate
         FROM invoice_items
@@ -116,20 +130,23 @@ class DatabaseManager:
 
     # ── Cycle de vie ────────────────────────────────────────────────────────
 
+    def _ensure_connection(self) -> None:
+        """Reconnecte si la connexion est absente ou fermée (ex: timeout idle pendant OCR)."""
+        if self._conn is None or self._conn.closed:
+            self._conn = psycopg2.connect(**self._db_config)
+            self._conn.autocommit = False
+            logger.info(
+                "Connexion PostgreSQL établie (%s@%s:%s/%s)",
+                self._db_config["user"],
+                self._db_config["host"],
+                self._db_config["port"],
+                self._db_config["dbname"],
+            )
+
     @handle_exceptions(Exception, raise_as=DatabaseError)
     def connect(self) -> None:
         """Établit la connexion à PostgreSQL."""
-        if self._conn and not self._conn.closed:
-            return
-
-        self._conn = psycopg2.connect(**self._db_config)
-        # Autocommit désactivé → on gère les transactions manuellement
-        self._conn.autocommit = False
-        logger.info("Connexion PostgreSQL établie (%s@%s:%s/%s)",
-                     self._db_config["user"],
-                     self._db_config["host"],
-                     self._db_config["port"],
-                     self._db_config["dbname"])
+        self._ensure_connection()
 
     @handle_exceptions(Exception, raise_as=DatabaseError)
     def close(self) -> None:
@@ -160,6 +177,7 @@ class DatabaseManager:
         int
             L'ID de la facture insérée.
         """
+        self._ensure_connection()
         ocr_data = {
             "ocr_line_references": invoice.ocr_line_references,
             "ocr_lines": getattr(invoice, "ocr_lines", []),
@@ -232,6 +250,7 @@ class DatabaseManager:
         int
             L'ID de la facture insérée.
         """
+        self._ensure_connection()
         cursor = self._conn.cursor()
 
         try:
@@ -294,6 +313,7 @@ class DatabaseManager:
         list[dict]
             Liste de dictionnaires, chaque facture contient ses `items`.
         """
+        self._ensure_connection()
         cursor = self._conn.cursor(cursor_factory=RealDictCursor)
 
         try:
@@ -307,6 +327,44 @@ class DatabaseManager:
                 self._serialize_row(inv)
 
             return invoices
+        finally:
+            cursor.close()
+
+    @staticmethod
+    def normalize_original_filename(filename: str) -> str:
+        """Normalise le nom de fichier (espaces → underscores), comme à l'upload."""
+        return filename.replace(" ", "_")
+
+    @staticmethod
+    def _upload_filename_pattern(normalized_filename: str) -> str:
+        """Regex PostgreSQL : préfixe UUID court + nom original normalisé."""
+        return rf"^[a-f0-9]{{8}}_{re.escape(normalized_filename)}$"
+
+    @handle_exceptions(Exception, raise_as=DatabaseError)
+    def get_invoice_by_original_filename(self, original_filename: str) -> dict | None:
+        """
+        Recherche une facture déjà traitée à partir du nom de fichier d'origine.
+
+        Correspond à un enregistrement exact (CLI) ou au format API
+        ``{uuid8}_{nom_normalisé}``.
+        """
+        normalized = self.normalize_original_filename(original_filename)
+        self._ensure_connection()
+        cursor = self._conn.cursor(cursor_factory=RealDictCursor)
+
+        try:
+            cursor.execute(
+                self._SELECT_INVOICE_BY_ORIGINAL_FILENAME,
+                (normalized, self._upload_filename_pattern(normalized)),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+
+            invoice = dict(row)
+            invoice["items"] = self._fetch_items(invoice["id"])
+            self._serialize_row(invoice)
+            return invoice
         finally:
             cursor.close()
 
@@ -325,6 +383,7 @@ class DatabaseManager:
         dict | None
             La facture avec ses items, ou None si introuvable.
         """
+        self._ensure_connection()
         cursor = self._conn.cursor(cursor_factory=RealDictCursor)
 
         try:
@@ -345,6 +404,7 @@ class DatabaseManager:
     @handle_exceptions(Exception, raise_as=DatabaseError)
     def update_invoice(self, invoice_id: int, data: dict, user_id: int = None) -> dict | None:
         """Met à jour les champs de base d'une facture, avec confirmation."""
+        self._ensure_connection()
         if not data and not user_id:
             return self.get_invoice_by_id(invoice_id)
             
@@ -386,6 +446,7 @@ class DatabaseManager:
 
     @handle_exceptions(Exception, raise_as=DatabaseError)
     def get_user_by_username(self, username: str) -> dict | None:
+        self._ensure_connection()
         cursor = self._conn.cursor(cursor_factory=RealDictCursor)
         try:
             cursor.execute("SELECT id, username, hashed_password FROM users WHERE username = %s;", (username,))

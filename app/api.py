@@ -155,6 +155,12 @@ class InvoiceCreateResponse(BaseModel):
     message: str
 
 
+class UploadInvoiceResponse(InvoiceResponse):
+    """Réponse après upload : inclut un indicateur de doublon."""
+    already_exists: bool = False
+    message: Optional[str] = None
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # LIFESPAN (Connexion DB gérée au démarrage / arrêt du serveur)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -179,7 +185,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Invoice Processor API",
     description="API REST pour la gestion des factures extraites par OCR + Gemini AI.",
-    version="1.0.0",
+    version="1.0.2",
     lifespan=lifespan,
 )
 
@@ -342,8 +348,7 @@ def get_file(filename: str):
 
 @app.post(
     "/invoices/upload",
-    response_model=InvoiceResponse,
-    status_code=201,
+    response_model=UploadInvoiceResponse,
     summary="Uploader et traiter une facture",
     description="Reçoit un fichier PDF ou image, exécute OCR + extraction LLM, persiste en PostgreSQL.",
 )
@@ -366,7 +371,21 @@ def upload_invoice(file: UploadFile = File(...)):
                    f"Formats acceptés : {', '.join(sorted(_ALLOWED_EXTENSIONS))}"
         )
 
-    # ── 2. Sauvegarde persistante du fichier ────────────────────────────────
+    # ── 2. Détection doublon (même nom de fichier déjà traité) ────────────
+    existing_invoice = db_manager.get_invoice_by_original_filename(original_filename)
+    if existing_invoice is not None:
+        logger.info(
+            "Upload ignoré — facture déjà existante (id=%s, fichier=%s)",
+            existing_invoice["id"],
+            original_filename,
+        )
+        return UploadInvoiceResponse(
+            **existing_invoice,
+            already_exists=True,
+            message=f"La facture « {original_filename} » a déjà été uploadée et traitée.",
+        )
+
+    # ── 3. Sauvegarde persistante du fichier ────────────────────────────────
     try:
         unique_id = str(uuid.uuid4())[:8]
         saved_filename = f"{unique_id}_{original_filename.replace(' ', '_')}"
@@ -384,7 +403,7 @@ def upload_invoice(file: UploadFile = File(...)):
             file_path.unlink()
             raise HTTPException(status_code=400, detail="Le fichier uploadé est vide (0 octet).")
 
-        # ── 3. Pipeline OCR → Extraction LLM ───────────────────────────────
+        # ── 4. Pipeline OCR → Extraction LLM ───────────────────────────────
         print(f"[DEBUG] Starting OCR on {file_path}")
         ocr_results, image_size = ocr_engine.read(str(file_path))
         print(f"[DEBUG] OCR complete, found {len(ocr_results)} text boxes, image_size={image_size}")
@@ -395,12 +414,16 @@ def upload_invoice(file: UploadFile = File(...)):
         invoice.ocr_image_size = image_size
         print(f"[DEBUG] Extraction complete")
 
-        # ── 4. Persistance en PostgreSQL ────────────────────────────────────
+        # ── 5. Persistance en PostgreSQL ────────────────────────────────────
         invoice_id = db_manager.save_invoice(invoice, saved_filename)
 
-        # ── 5. Récupérer la facture complète depuis la DB pour la réponse ──
+        # ── 6. Récupérer la facture complète depuis la DB pour la réponse ──
         saved_invoice = db_manager.get_invoice_by_id(invoice_id)
-        return saved_invoice
+        return UploadInvoiceResponse(
+            **saved_invoice,
+            already_exists=False,
+            message="Facture traitée avec succès.",
+        )
 
     except InvoiceProcessorError as exc:
         raise HTTPException(status_code=422, detail=f"Erreur de traitement : {exc}")

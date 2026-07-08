@@ -35,7 +35,7 @@ services:
 
   # ── API FastAPI + PaddleOCR ────────────────────────────────────────────────
   invoice-api:
-    image: mohamedhmidouch/ocr-api:1.0.0
+    image: mohamedhmidouch/ocr-api:1.0.3
     container_name: invoice-api
     restart: unless-stopped
 

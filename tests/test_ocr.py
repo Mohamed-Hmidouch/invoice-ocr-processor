@@ -3,7 +3,7 @@ Tests unitaires pour composants centraux de l'Invoice Processor.
 
 Approche:
 - Tests isolés via l'utilisation intensive des Mocks.
-- Aucun appel réseau réel au LLM (Gemini).
+- Aucun appel réseau réel au LLM (NVIDIA Nemotron).
 - Zéro chargement lourd de PaddleOCR durant les tests.
 """
 import pytest
@@ -16,23 +16,23 @@ from app.core.exceptions import ExtractionError
 from app.core.extractor import Extractor
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TESTS AGENTIC EXTRACTOR (GEMINI via API GOOGLE)
+# TESTS AGENTIC EXTRACTOR (NVIDIA Nemotron via NIM)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
+@patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"})
 @patch("app.core.extractor.OpenAI")
 def test_extractor_initialization(mock_openai_class):
     """Vérifie que l'extracteur s'initialise correctement avec OpenAI."""
     extractor = Extractor()
-    assert extractor.model_name == "gemini-2.5-flash"
+    assert extractor.model_name == "nvidia/llama-3.3-nemotron-super-49b-v1.5"
 
-@patch.dict("os.environ", {"GEMINI_API_KEY": ""})
+@patch.dict("os.environ", {"NVIDIA_API_KEY": ""})
 def test_extractor_raises_without_api_key():
-    """Vérifie qu'une clé GEMINI_API_KEY manquante lève ExtractionError."""
-    with pytest.raises(ExtractionError, match="GEMINI_API_KEY"):
+    """Vérifie qu'une clé NVIDIA_API_KEY manquante lève ExtractionError."""
+    with pytest.raises(ExtractionError, match="NVIDIA_API_KEY"):
         Extractor()
 
-@patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
+@patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"})
 @patch("app.core.extractor.OpenAI")
 def test_agentic_extractor_success_mapping(mock_openai_class):
     """
@@ -87,7 +87,7 @@ def test_agentic_extractor_success_mapping(mock_openai_class):
     assert isinstance(invoice.items[0], InvoiceItem)
     assert invoice.items[0].description == "Laptop Pro"
 
-@patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
+@patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"})
 @patch("app.core.extractor.OpenAI")
 def test_agentic_extractor_extra_data_and_ocr_references(mock_openai_class):
     """Vérifie le mapping de document_type, extra_data et ocr_line_references."""
@@ -120,7 +120,7 @@ def test_agentic_extractor_extra_data_and_ocr_references(mock_openai_class):
     assert invoice.ocr_line_references["supplier_name"] == [0]
     assert invoice.ocr_line_references["freight_cost"] == [10, 11]
 
-@patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
+@patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"})
 @patch("app.core.extractor.OpenAI")
 def test_agentic_extractor_tolerate_missing_fields(mock_openai_class):
     """
