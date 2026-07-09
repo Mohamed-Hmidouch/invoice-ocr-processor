@@ -178,10 +178,31 @@ class DatabaseManager:
             L'ID de la facture insérée.
         """
         self._ensure_connection()
+        image_size_meta = getattr(invoice, "ocr_image_size", None)
+        image_size = None
+        image_sizes = getattr(invoice, "ocr_image_sizes", None)
+
+        if isinstance(image_size_meta, dict):
+            if "image_sizes" in image_size_meta:
+                image_sizes = image_size_meta["image_sizes"]
+                image_size = {
+                    "width": image_size_meta.get("width"),
+                    "height": image_size_meta.get("height"),
+                }
+            elif "width" in image_size_meta and "height" in image_size_meta:
+                image_size = {
+                    "width": image_size_meta["width"],
+                    "height": image_size_meta["height"],
+                }
+
         ocr_data = {
             "ocr_line_references": invoice.ocr_line_references,
             "ocr_lines": getattr(invoice, "ocr_lines", []),
-            "image_size": getattr(invoice, "ocr_image_size", None),
+            "image_size": image_size,
+            "image_sizes": image_sizes,
+            "selected_pages": getattr(invoice, "selected_pages", None),
+            "total_pages": getattr(invoice, "total_pages", None),
+            "page_extractions": getattr(invoice, "page_extractions", None),
         }
         
         cursor = self._conn.cursor()
@@ -398,6 +419,23 @@ class DatabaseManager:
             self._serialize_row(invoice)
 
             return invoice
+        finally:
+            cursor.close()
+
+    @handle_exceptions(Exception, raise_as=DatabaseError)
+    def update_ocr_data(self, invoice_id: int, updates: dict) -> None:
+        """Fusionne des clés dans le JSONB ocr_data d'une facture."""
+        self._ensure_connection()
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE invoices SET ocr_data = COALESCE(ocr_data, '{}'::jsonb) || %s::jsonb WHERE id = %s",
+                (Json(updates), invoice_id),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
         finally:
             cursor.close()
 
